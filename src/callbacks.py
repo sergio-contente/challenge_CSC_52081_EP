@@ -23,6 +23,7 @@ class EpisodeLoggerCallback(BaseCallback):
 
             info = infos[i]
             ep_reward = info.get("total_reward", 0.0)
+            raw_reward = info.get("raw_reward", ep_reward)
             ep_length = info.get("episode_step", 0)
             ep_repairs = info.get("repair_count", 0)
 
@@ -38,6 +39,7 @@ class EpisodeLoggerCallback(BaseCallback):
 
             # log every episode to TensorBoard
             self.logger.record("episode/reward", ep_reward)
+            self.logger.record("episode/raw_reward", raw_reward)
             self.logger.record("episode/length", ep_length)
             self.logger.record("episode/repairs", ep_repairs)
             self.logger.record("episode/total_episodes", self.total_episodes)
