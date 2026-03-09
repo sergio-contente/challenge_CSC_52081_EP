@@ -17,6 +17,16 @@ class EpisodeLoggerCallback(BaseCallback):
         infos = self.locals.get("infos", [])
         dones = self.locals.get("dones", [])
 
+        # log feature stats every step (from current obs)
+        obs = self.locals.get("new_obs", None)
+        if obs is not None and obs.shape[-1] >= 33:
+            self.logger.record("features/delta_mean", float(np.mean(np.abs(obs[:, 9:16]))))
+            self.logger.record("features/slope_mean", float(np.mean(np.abs(obs[:, 16:23]))))
+            self.logger.record("features/rolling_mean_mean", float(np.mean(obs[:, 23:30])))
+            self.logger.record("features/episode_step", float(np.mean(obs[:, 30])))
+            self.logger.record("features/repair_count", float(np.mean(obs[:, 31])))
+            self.logger.record("features/steps_since_repair", float(np.mean(obs[:, 32])))
+
         for i, done in enumerate(dones):
             if not done:
                 continue

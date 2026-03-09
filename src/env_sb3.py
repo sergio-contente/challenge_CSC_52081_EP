@@ -6,6 +6,7 @@ from stable_baselines3.common.vec_env import VecEnv
 from student_client import create_student_gym_env
 from student_client.student_gym_env_vectorized import create_student_gym_env_vectorized
 from src.reward_shaping import shape_reward
+from src.feature_engineering import FeatureExtractor, NUM_FEATURES
 
 MAX_RETRIES = 5
 RETRY_DELAY = 5
@@ -92,7 +93,7 @@ class VecSB3Env(VecEnv):
     """
 
     def __init__(self, user_token: str, num_envs: int = 4):
-        obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(9,), dtype=np.float32)
+        obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(NUM_FEATURES,), dtype=np.float32)
         act_space = spaces.Discrete(3)
         super().__init__(num_envs, obs_space, act_space)
 
@@ -110,7 +111,9 @@ class VecSB3Env(VecEnv):
         self.episode_steps = np.zeros(num_envs, dtype=int)
 
         self._actions = None
-        self._obs_buf = np.zeros((num_envs, 9), dtype=np.float32)
+        self._raw_obs_buf = np.zeros((num_envs, 9), dtype=np.float32)
+        self._obs_buf = np.zeros((num_envs, NUM_FEATURES), dtype=np.float32)
+        self._feat = FeatureExtractor(num_envs)
 
     @staticmethod
     def _last_obs(obs):
@@ -125,10 +128,14 @@ class VecSB3Env(VecEnv):
     def reset(self):
         obs_list, _infos = _retry(self.venv.reset)
         for i, obs in enumerate(obs_list):
-            self._obs_buf[i] = self._last_obs(obs)
+            self._raw_obs_buf[i] = self._last_obs(obs)
         self.repair_counts[:] = 0
         self.steps_since_repair[:] = 0
         self.episode_steps[:] = 0
+        self._feat.reset()
+        self._obs_buf[:] = self._feat.transform(
+            self._raw_obs_buf, self.episode_steps, self.repair_counts, self.steps_since_repair
+        )
         return self._obs_buf.copy()
 
     def step_async(self, actions):
@@ -140,9 +147,9 @@ class VecSB3Env(VecEnv):
         )
 
         # raw_obs is a list of variable-shape arrays; extract last obs per env
-        obs = np.zeros((self.num_envs, 9), dtype=np.float32)
+        raw = np.zeros((self.num_envs, 9), dtype=np.float32)
         for i, o in enumerate(raw_obs):
-            obs[i] = self._last_obs(o)
+            raw[i] = self._last_obs(o)
 
         rewards = np.asarray(rewards, dtype=np.float32)
         terminateds = np.asarray(terminateds, dtype=bool)
@@ -165,12 +172,18 @@ class VecSB3Env(VecEnv):
             rewards[i] = shape_reward(
                 raw_reward=float(rewards[i]),
                 action=int(self._actions[i]),
-                obs=obs[i],
+                obs=raw[i],
                 episode_step=int(self.episode_steps[i]),
                 terminated=bool(terminateds[i]),
                 truncated=bool(truncateds[i]),
                 info=infos[i],
             )
+
+        # compute features from raw obs
+        self._raw_obs_buf[:] = raw
+        obs = self._feat.transform(
+            self._raw_obs_buf, self.episode_steps, self.repair_counts, self.steps_since_repair
+        )
 
         # SB3 VecEnv contract: auto-reset done envs, stash terminal obs
         done_indices = np.where(dones)[0]
@@ -180,10 +193,17 @@ class VecSB3Env(VecEnv):
 
             reset_obs_list, _reset_infos = _retry(self.venv.reset_specific_envs, done_indices.tolist())
             for j, i in enumerate(done_indices):
-                obs[i] = self._last_obs(reset_obs_list[j])
+                self._raw_obs_buf[i] = self._last_obs(reset_obs_list[j])
                 self.repair_counts[i] = 0
                 self.steps_since_repair[i] = 0
                 self.episode_steps[i] = 0
+            self._feat.reset(env_indices=done_indices.tolist())
+            # recompute features for reset envs
+            reset_feats = self._feat.transform(
+                self._raw_obs_buf, self.episode_steps, self.repair_counts, self.steps_since_repair
+            )
+            for i in done_indices:
+                obs[i] = reset_feats[i]
 
         self._obs_buf[:] = obs
         return self._obs_buf.copy(), rewards, dones, infos
