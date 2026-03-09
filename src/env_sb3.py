@@ -57,6 +57,7 @@ class SB3Env(gymnasium.Env):
     def close(self):
         self.student_env.close()
 
+    @staticmethod
     def _to_single_obs(obs):
         #Guarantee a flat (9,) float32 array
         obs = np.asarray(obs, dtype=np.float32)
