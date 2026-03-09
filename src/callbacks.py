@@ -77,6 +77,31 @@ class EpisodeLoggerCallback(BaseCallback):
         return True
 
 
+class EpisodeCheckpointCallback(BaseCallback):
+    """Save model every N episodes."""
+
+    def __init__(self, save_every_n_episodes: int = 100, save_path: str = "./checkpoints/dqn/",
+                 name_prefix: str = "dqn_aircraft", verbose: int = 0):
+        super().__init__(verbose)
+        self.save_every = save_every_n_episodes
+        self.save_path = save_path
+        self.name_prefix = name_prefix
+        self.episode_count = 0
+
+    def _on_step(self) -> bool:
+        import os
+        dones = self.locals.get("dones", [])
+        for done in dones:
+            if done:
+                self.episode_count += 1
+                if self.episode_count % self.save_every == 0:
+                    os.makedirs(self.save_path, exist_ok=True)
+                    path = os.path.join(self.save_path, f"{self.name_prefix}_ep{self.episode_count}")
+                    self.model.save(path)
+                    print(f"[CHECKPOINT] Saved at episode {self.episode_count}: {path}")
+        return True
+
+
 class StepBudgetCallback(BaseCallback):
     """Stops training when the API step budget is exhausted."""
 
