@@ -10,7 +10,7 @@ from src.callbacks import EpisodeLoggerCallback, StepBudgetCallback
 
 USER_TOKEN = "SERgio26735540"
 NUM_ENVS = 4
-TOTAL_TIMESTEPS = 5000
+TOTAL_TIMESTEPS = 20000
 CHECKPOINT_DIR = "./checkpoints/dqn/"
 CHECKPOINT_FREQ = 500
 
