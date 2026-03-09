@@ -3,18 +3,15 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from stable_baselines3 import DQN
-from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.callbacks import CheckpointCallback
-from src.env_sb3 import SB3Env
+from src.env_sb3 import VecSB3Env
 
 USER_TOKEN = "SERgio26735540"
+NUM_ENVS = 4
 TOTAL_TIMESTEPS = 5000
 
-def make_env():
-    return SB3Env(user_token=USER_TOKEN)
-
 def main():
-    env = DummyVecEnv([make_env])
+    env = VecSB3Env(user_token=USER_TOKEN, num_envs=NUM_ENVS)
 
     model = DQN(
         policy="MlpPolicy",
