@@ -4,18 +4,21 @@ import glob
 import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from stable_baselines3 import DQN
+from stable_baselines3 import DQN, PPO
 from student_client import get_leaderboard_score
 from src.env_sb3 import VecSB3Env
 
 USER_TOKEN = "SERgio26735540"
 NUM_ENVS = 4
 NUM_EVAL_EPISODES = 100
-MODEL_PATH = "models/dqn_aircraft"
-CHECKPOINT_DIR = "./checkpoints/dqn/"
+
+ALGO_CONFIG = {
+    "dqn": {"cls": DQN, "model_path": "models/dqn_aircraft", "checkpoint_dir": "./checkpoints/dqn/", "prefix": "dqn_aircraft"},
+    "ppo": {"cls": PPO, "model_path": "models/ppo_aircraft", "checkpoint_dir": "./checkpoints/ppo/", "prefix": "ppo_aircraft"},
+}
 
 
-def find_latest_checkpoint(checkpoint_dir, prefix="dqn_aircraft"):
+def find_latest_checkpoint(checkpoint_dir, prefix):
     patterns = [
         os.path.join(checkpoint_dir, f"{prefix}_ep*.zip"),
         os.path.join(checkpoint_dir, f"{prefix}_*_steps.zip"),
@@ -28,24 +31,28 @@ def find_latest_checkpoint(checkpoint_dir, prefix="dqn_aircraft"):
     return max(files, key=os.path.getmtime)
 
 
-def load_model(env):
+def load_model(env, algo="dqn"):
     """Load model: try saved model first, then latest checkpoint."""
-    if os.path.exists(MODEL_PATH + ".zip"):
-        print(f"Loading model from {MODEL_PATH}")
-        return DQN.load(MODEL_PATH, env=env)
+    cfg = ALGO_CONFIG[algo]
+    model_path = cfg["model_path"]
+    cls = cfg["cls"]
 
-    checkpoint = find_latest_checkpoint(CHECKPOINT_DIR)
+    if os.path.exists(model_path + ".zip"):
+        print(f"Loading {algo.upper()} model from {model_path}")
+        return cls.load(model_path, env=env)
+
+    checkpoint = find_latest_checkpoint(cfg["checkpoint_dir"], cfg["prefix"])
     if checkpoint:
-        print(f"Loading checkpoint from {checkpoint}")
-        return DQN.load(checkpoint, env=env)
+        print(f"Loading {algo.upper()} checkpoint from {checkpoint}")
+        return cls.load(checkpoint, env=env)
 
-    print("No model or checkpoint found!")
+    print(f"No {algo.upper()} model or checkpoint found!")
     sys.exit(1)
 
 
-def evaluate():
+def evaluate(algo="dqn"):
     env = VecSB3Env(user_token=USER_TOKEN, num_envs=NUM_ENVS)
-    model = load_model(env)
+    model = load_model(env, algo=algo)
 
     print(f"Evaluating for {NUM_EVAL_EPISODES} episodes (deterministic policy)...")
 
@@ -115,4 +122,8 @@ def evaluate():
 
 
 if __name__ == "__main__":
-    evaluate()
+    algo = sys.argv[1] if len(sys.argv) > 1 else "dqn"
+    if algo not in ALGO_CONFIG:
+        print(f"Unknown algo '{algo}'. Choose from: {list(ALGO_CONFIG.keys())}")
+        sys.exit(1)
+    evaluate(algo=algo)
