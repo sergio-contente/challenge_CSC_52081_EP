@@ -1,6 +1,7 @@
 import sys
 import os
 import glob
+import signal
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from stable_baselines3 import DQN
@@ -16,12 +17,16 @@ CHECKPOINT_FREQ = 500
 
 
 def find_latest_checkpoint(checkpoint_dir, prefix="dqn_aircraft"):
-    pattern = os.path.join(checkpoint_dir, f"{prefix}_*_steps.zip")
-    files = glob.glob(pattern)
+    patterns = [
+        os.path.join(checkpoint_dir, f"{prefix}_ep*.zip"),
+        os.path.join(checkpoint_dir, f"{prefix}_*_steps.zip"),
+    ]
+    files = []
+    for p in patterns:
+        files.extend(glob.glob(p))
     if not files:
         return None
-    latest = max(files, key=os.path.getmtime)
-    return latest
+    return max(files, key=os.path.getmtime)
 
 
 def main():
@@ -57,6 +62,18 @@ def main():
             verbose=1,
             seed=42,
         )
+
+    # save on Ctrl+C
+    def save_on_interrupt(signum, frame):
+        print("\n[INTERRUPT] Saving model before exit...")
+        os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+        model.save(os.path.join(CHECKPOINT_DIR, "dqn_aircraft_interrupted"))
+        model.save("models/dqn_aircraft")
+        print(f"[INTERRUPT] Saved to {CHECKPOINT_DIR}dqn_aircraft_interrupted and models/dqn_aircraft")
+        env.close()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, save_on_interrupt)
 
     callbacks = CallbackList([
         EpisodeLoggerCallback(log_every_n_episodes=20),
