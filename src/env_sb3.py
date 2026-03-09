@@ -5,6 +5,7 @@ from gymnasium import spaces
 from stable_baselines3.common.vec_env import VecEnv
 from student_client import create_student_gym_env
 from student_client.student_gym_env_vectorized import create_student_gym_env_vectorized
+from src.reward_shaping import shape_reward
 
 MAX_RETRIES = 5
 RETRY_DELAY = 5
@@ -148,7 +149,7 @@ class VecSB3Env(VecEnv):
         truncateds = np.asarray(truncateds, dtype=bool)
         dones = terminateds | truncateds
 
-        # update bookkeeping
+        # update bookkeeping + reward shaping
         for i in range(self.num_envs):
             self.episode_steps[i] += 1
             if self._actions[i] == 1:
@@ -159,6 +160,17 @@ class VecSB3Env(VecEnv):
 
             infos[i]["repair_count"] = int(self.repair_counts[i])
             infos[i]["episode_step"] = int(self.episode_steps[i])
+            infos[i]["raw_reward"] = float(rewards[i])
+
+            rewards[i] = shape_reward(
+                raw_reward=float(rewards[i]),
+                action=int(self._actions[i]),
+                obs=obs[i],
+                episode_step=int(self.episode_steps[i]),
+                terminated=bool(terminateds[i]),
+                truncated=bool(truncateds[i]),
+                info=infos[i],
+            )
 
         # SB3 VecEnv contract: auto-reset done envs, stash terminal obs
         done_indices = np.where(dones)[0]
