@@ -1,9 +1,26 @@
+import time
 import numpy as np
 import gymnasium
 from gymnasium import spaces
 from stable_baselines3.common.vec_env import VecEnv
 from student_client import create_student_gym_env
 from student_client.student_gym_env_vectorized import create_student_gym_env_vectorized
+
+MAX_RETRIES = 5
+RETRY_DELAY = 5
+
+
+def _retry(fn, *args, **kwargs):
+    """Call fn with retries on any exception."""
+    for attempt in range(MAX_RETRIES):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            if attempt < MAX_RETRIES - 1:
+                print(f"[retry {attempt+1}/{MAX_RETRIES}] {e}")
+                time.sleep(RETRY_DELAY)
+            else:
+                raise
 
 
 class SB3Env(gymnasium.Env):
@@ -26,7 +43,7 @@ class SB3Env(gymnasium.Env):
         self.prev_obs = None
 
     def reset(self, seed=None, options=None):
-        obs, info = self.student_env.reset()
+        obs, info = _retry(self.student_env.reset)
         obs = self._to_single_obs(obs)
 
         self.repair_count = 0
@@ -38,7 +55,7 @@ class SB3Env(gymnasium.Env):
 
     def step(self, action):
         action = int(action)
-        result = self.student_env.step(action=action, step_size=10, return_all_states=False)
+        result = _retry(self.student_env.step, action=action, step_size=10, return_all_states=False)
 
         obs, reward, terminated, truncated, info = result
         obs = self._to_single_obs(obs)
@@ -105,7 +122,7 @@ class VecSB3Env(VecEnv):
         return arr
 
     def reset(self):
-        obs_list, _infos = self.venv.reset()
+        obs_list, _infos = _retry(self.venv.reset)
         for i, obs in enumerate(obs_list):
             self._obs_buf[i] = self._last_obs(obs)
         self.repair_counts[:] = 0
@@ -117,8 +134,8 @@ class VecSB3Env(VecEnv):
         self._actions = np.asarray(actions, dtype=int)
 
     def step_wait(self):
-        raw_obs, rewards, terminateds, truncateds, infos = self.venv.step(
-            self._actions, return_all_states=True
+        raw_obs, rewards, terminateds, truncateds, infos = _retry(
+            self.venv.step, self._actions, return_all_states=True
         )
 
         # raw_obs is a list of variable-shape arrays; extract last obs per env
@@ -149,7 +166,7 @@ class VecSB3Env(VecEnv):
             for i in done_indices:
                 infos[i]["terminal_observation"] = obs[i].copy()
 
-            reset_obs_list, _reset_infos = self.venv.reset_specific_envs(done_indices.tolist())
+            reset_obs_list, _reset_infos = _retry(self.venv.reset_specific_envs, done_indices.tolist())
             for j, i in enumerate(done_indices):
                 obs[i] = self._last_obs(reset_obs_list[j])
                 self.repair_counts[i] = 0
