@@ -78,11 +78,13 @@ class VecSB3Env(VecEnv):
         act_space = spaces.Discrete(3)
         super().__init__(num_envs, obs_space, act_space)
 
+        # return_all_states=True avoids a numpy bug inside student_client
+        # when envs terminate with different obs lengths
         self.venv = create_student_gym_env_vectorized(
             user_token=user_token,
             num_envs=num_envs,
             auto_reset=False,
-            return_all_states=False,
+            return_all_states=True,
         )
 
         self.repair_counts = np.zeros(num_envs, dtype=int)
@@ -92,12 +94,20 @@ class VecSB3Env(VecEnv):
         self._actions = None
         self._obs_buf = np.zeros((num_envs, 9), dtype=np.float32)
 
+    @staticmethod
+    def _last_obs(obs):
+        """Extract last (9,) obs from whatever shape the env returns."""
+        arr = np.asarray(obs, dtype=np.float32)
+        if arr.ndim == 0 or arr.size == 0:
+            return np.zeros(9, dtype=np.float32)
+        while arr.ndim > 1:
+            arr = arr[-1]
+        return arr
+
     def reset(self):
-        obs, _infos = self.venv.reset()
-        obs = np.asarray(obs, dtype=np.float32)
-        if obs.ndim == 1:
-            obs = obs.reshape(1, -1)
-        self._obs_buf[:] = obs
+        obs_list, _infos = self.venv.reset()
+        for i, obs in enumerate(obs_list):
+            self._obs_buf[i] = self._last_obs(obs)
         self.repair_counts[:] = 0
         self.steps_since_repair[:] = 0
         self.episode_steps[:] = 0
@@ -107,17 +117,21 @@ class VecSB3Env(VecEnv):
         self._actions = np.asarray(actions, dtype=int)
 
     def step_wait(self):
-        obs, rewards, terminateds, truncateds, infos = self.venv.step(
-            self._actions, return_all_states=False
+        raw_obs, rewards, terminateds, truncateds, infos = self.venv.step(
+            self._actions, return_all_states=True
         )
-        obs = np.asarray(obs, dtype=np.float32)
-        if obs.ndim == 1:
-            obs = obs.reshape(1, -1)
+
+        # raw_obs is a list of variable-shape arrays; extract last obs per env
+        obs = np.zeros((self.num_envs, 9), dtype=np.float32)
+        for i, o in enumerate(raw_obs):
+            obs[i] = self._last_obs(o)
+
         rewards = np.asarray(rewards, dtype=np.float32)
         terminateds = np.asarray(terminateds, dtype=bool)
         truncateds = np.asarray(truncateds, dtype=bool)
         dones = terminateds | truncateds
 
+        # update bookkeeping
         for i in range(self.num_envs):
             self.episode_steps[i] += 1
             if self._actions[i] == 1:
@@ -129,15 +143,15 @@ class VecSB3Env(VecEnv):
             infos[i]["repair_count"] = int(self.repair_counts[i])
             infos[i]["episode_step"] = int(self.episode_steps[i])
 
+        # SB3 VecEnv contract: auto-reset done envs, stash terminal obs
         done_indices = np.where(dones)[0]
         if len(done_indices) > 0:
             for i in done_indices:
                 infos[i]["terminal_observation"] = obs[i].copy()
 
-            reset_obs, _reset_infos = self.venv.reset_specific_envs(done_indices.tolist())
-            reset_obs = np.asarray(reset_obs, dtype=np.float32)
+            reset_obs_list, _reset_infos = self.venv.reset_specific_envs(done_indices.tolist())
             for j, i in enumerate(done_indices):
-                obs[i] = reset_obs[j]
+                obs[i] = self._last_obs(reset_obs_list[j])
                 self.repair_counts[i] = 0
                 self.steps_since_repair[i] = 0
                 self.episode_steps[i] = 0
