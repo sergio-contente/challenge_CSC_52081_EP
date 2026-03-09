@@ -156,7 +156,7 @@ class VecSB3Env(VecEnv):
         truncateds = np.asarray(truncateds, dtype=bool)
         dones = terminateds | truncateds
 
-        # update bookkeeping + reward shaping
+        # update bookkeeping
         for i in range(self.num_envs):
             self.episode_steps[i] += 1
             if self._actions[i] == 1:
@@ -169,21 +169,23 @@ class VecSB3Env(VecEnv):
             infos[i]["episode_step"] = int(self.episode_steps[i])
             infos[i]["raw_reward"] = float(rewards[i])
 
-            rewards[i] = shape_reward(
-                raw_reward=float(rewards[i]),
-                action=int(self._actions[i]),
-                obs=raw[i],
-                episode_step=int(self.episode_steps[i]),
-                terminated=bool(terminateds[i]),
-                truncated=bool(truncateds[i]),
-                info=infos[i],
-            )
-
         # compute features from raw obs
         self._raw_obs_buf[:] = raw
         obs = self._feat.transform(
             self._raw_obs_buf, self.episode_steps, self.repair_counts, self.steps_since_repair
         )
+
+        # reward shaping with full features (33,)
+        for i in range(self.num_envs):
+            rewards[i] = shape_reward(
+                raw_reward=float(rewards[i]),
+                action=int(self._actions[i]),
+                obs=obs[i],
+                episode_step=int(self.episode_steps[i]),
+                terminated=bool(terminateds[i]),
+                truncated=bool(truncateds[i]),
+                info=infos[i],
+            )
 
         # SB3 VecEnv contract: auto-reset done envs, stash terminal obs
         done_indices = np.where(dones)[0]
