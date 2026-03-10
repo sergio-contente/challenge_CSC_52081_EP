@@ -25,41 +25,37 @@ def shape_reward(raw_reward, action, obs, episode_step, terminated, truncated, i
     deltas = obs[9:16]
     slopes = obs[16:23]
 
-    # --- Survival bonus ---
+    # --- Survival bonus (small, just to encourage not crashing) ---
     if not terminated and not truncated:
-        shaped += 5.0
+        shaped += 1.0
 
-    # --- Sell timing ---
+    # --- Sell bonus: reward selling after enough steps ---
     if action == 2:
-        if episode_step < 10:
-            shaped -= 50.0
-        elif episode_step >= 20:
-            shaped += 20.0
+        if episode_step < 5:
+            shaped -= 50.0  # selling too early wastes potential
+        elif episode_step >= 15:
+            shaped += 30.0  # good sell timing
 
     # --- Engine failure penalty ---
     if terminated and action != 2:
-        shaped -= 100.0
+        shaped -= 200.0
 
-    # --- Smart repair: reward when sensors show degradation ---
-    if action == 1 and episode_step > 2:
-        # magnitude of sensor drift (deltas)
-        delta_magnitude = np.abs(deltas).mean()
-        # magnitude of degradation trend (slopes)
-        slope_magnitude = np.abs(slopes).mean()
-
-        if delta_magnitude > 0.3 or slope_magnitude > 0.2:
-            shaped += 15.0  # good repair timing
+    # --- Repair: only reward when degradation is clearly high ---
+    if action == 1:
+        if episode_step <= 2:
+            shaped -= 20.0  # repairing a fresh engine
         else:
-            shaped -= 5.0  # unnecessary repair, wasting money
+            slope_magnitude = np.abs(slopes).mean()
+            delta_magnitude = np.abs(deltas).mean()
+            if slope_magnitude > 0.5 or delta_magnitude > 0.5:
+                shaped += 5.0  # justified repair
+            else:
+                shaped -= 15.0  # unnecessary repair, heavy penalty
 
-    # --- Penalize repair on fresh engine ---
-    if action == 1 and episode_step <= 2:
-        shaped -= 15.0
-
-    # --- Penalize doing nothing when degradation is high ---
-    if action == 0 and episode_step > 5:
+    # --- Penalize doing nothing when degradation is critical ---
+    if action == 0 and episode_step > 10:
         slope_magnitude = np.abs(slopes).mean()
-        if slope_magnitude > 0.5:
-            shaped -= 10.0  # should be repairing or selling
+        if slope_magnitude > 1.0:
+            shaped -= 5.0  # should be repairing or selling
 
     return shaped
