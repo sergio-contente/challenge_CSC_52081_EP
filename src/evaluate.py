@@ -5,6 +5,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from stable_baselines3 import DQN, PPO
+from stable_baselines3.common.vec_env import VecNormalize
 from student_client import get_leaderboard_score
 from src.env_sb3 import VecSB3Env
 
@@ -22,6 +23,7 @@ def find_latest_checkpoint(checkpoint_dir, prefix):
     patterns = [
         os.path.join(checkpoint_dir, f"{prefix}_ep*.zip"),
         os.path.join(checkpoint_dir, f"{prefix}_*_steps.zip"),
+        os.path.join(checkpoint_dir, f"{prefix}_interrupted.zip"),
     ]
     files = []
     for p in patterns:
@@ -51,7 +53,19 @@ def load_model(env, algo="dqn"):
 
 
 def evaluate(algo="dqn"):
-    env = VecSB3Env(user_token=USER_TOKEN, num_envs=NUM_ENVS)
+    raw_env = VecSB3Env(user_token=USER_TOKEN, num_envs=NUM_ENVS)
+
+    # Load VecNormalize stats if available (eval mode: no stats update)
+    vecnorm_path = f"models/{algo}_vecnormalize.pkl"
+    if os.path.exists(vecnorm_path):
+        print(f"Loading VecNormalize stats from {vecnorm_path}")
+        env = VecNormalize.load(vecnorm_path, raw_env)
+        env.training = False
+        env.norm_reward = False
+    else:
+        print("No VecNormalize stats found, using raw observations")
+        env = raw_env
+
     model = load_model(env, algo=algo)
 
     print(f"Evaluating for {NUM_EVAL_EPISODES} episodes (deterministic policy)...")

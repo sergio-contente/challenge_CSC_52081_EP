@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
+from stable_baselines3.common.vec_env import VecNormalize
 from src.env_sb3 import VecSB3Env
 from src.callbacks import EpisodeLoggerCallback, StepBudgetCallback
 
@@ -20,6 +21,7 @@ def find_latest_checkpoint(checkpoint_dir, prefix="ppo_aircraft"):
     patterns = [
         os.path.join(checkpoint_dir, f"{prefix}_ep*.zip"),
         os.path.join(checkpoint_dir, f"{prefix}_*_steps.zip"),
+        os.path.join(checkpoint_dir, f"{prefix}_interrupted.zip"),
     ]
     files = []
     for p in patterns:
@@ -30,36 +32,44 @@ def find_latest_checkpoint(checkpoint_dir, prefix="ppo_aircraft"):
 
 
 def main():
-    env = VecSB3Env(user_token=USER_TOKEN, num_envs=NUM_ENVS)
+    raw_env = VecSB3Env(user_token=USER_TOKEN, num_envs=NUM_ENVS)
+    vecnorm_path = os.path.join(CHECKPOINT_DIR, "vecnormalize.pkl")
 
     checkpoint = find_latest_checkpoint(CHECKPOINT_DIR)
 
-    if checkpoint:
+    if checkpoint and os.path.exists(vecnorm_path):
         print(f"Resuming from checkpoint: {checkpoint}")
+        env = VecNormalize.load(vecnorm_path, raw_env)
         model = PPO.load(checkpoint, env=env, tensorboard_log="./logs/ppo/")
         remaining = max(0, TOTAL_TIMESTEPS - model.num_timesteps)
         print(f"Already trained {model.num_timesteps} steps, {remaining} remaining")
     else:
-        print("Starting PPO training from scratch")
-        remaining = TOTAL_TIMESTEPS
-        model = PPO(
-            policy="MlpPolicy",
-            env=env,
-            learning_rate=3e-4,
-            n_steps=128,
-            batch_size=64,
-            n_epochs=4,
-            gamma=0.99,
-            gae_lambda=0.95,
-            clip_range=0.2,
-            ent_coef=0.01,
-            vf_coef=0.5,
-            max_grad_norm=0.5,
-            policy_kwargs=dict(net_arch=[128, 128]),
-            tensorboard_log="./logs/ppo/",
-            verbose=1,
-            seed=42,
-        )
+        env = VecNormalize(raw_env, norm_obs=True, norm_reward=False, clip_obs=10.0)
+        if checkpoint:
+            print(f"Resuming from checkpoint (no vecnorm stats): {checkpoint}")
+            model = PPO.load(checkpoint, env=env, tensorboard_log="./logs/ppo/")
+            remaining = max(0, TOTAL_TIMESTEPS - model.num_timesteps)
+        else:
+            print("Starting PPO training from scratch")
+            remaining = TOTAL_TIMESTEPS
+            model = PPO(
+                policy="MlpPolicy",
+                env=env,
+                learning_rate=3e-4,
+                n_steps=128,
+                batch_size=64,
+                n_epochs=4,
+                gamma=0.99,
+                gae_lambda=0.95,
+                clip_range=0.2,
+                ent_coef=0.05,
+                vf_coef=0.5,
+                max_grad_norm=0.5,
+                policy_kwargs=dict(net_arch=[128, 128]),
+                tensorboard_log="./logs/ppo/",
+                verbose=1,
+                seed=42,
+            )
 
     # save on Ctrl+C
     def save_on_interrupt(signum, frame):
@@ -67,7 +77,9 @@ def main():
         os.makedirs(CHECKPOINT_DIR, exist_ok=True)
         model.save(os.path.join(CHECKPOINT_DIR, "ppo_aircraft_interrupted"))
         model.save("models/ppo_aircraft")
-        print(f"[INTERRUPT] Saved to {CHECKPOINT_DIR}ppo_aircraft_interrupted and models/ppo_aircraft")
+        env.save(vecnorm_path)
+        env.save("models/ppo_vecnormalize.pkl")
+        print(f"[INTERRUPT] Saved model + vecnorm stats")
         env.close()
         sys.exit(0)
 
@@ -82,7 +94,10 @@ def main():
     if remaining > 0:
         model.learn(total_timesteps=remaining, callback=callbacks, reset_num_timesteps=False)
         model.save("models/ppo_aircraft")
-        print(f"Model saved to models/ppo_aircraft")
+        os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+        env.save(vecnorm_path)
+        env.save("models/ppo_vecnormalize.pkl")
+        print(f"Model + vecnorm stats saved")
     else:
         print("Training already complete!")
 
